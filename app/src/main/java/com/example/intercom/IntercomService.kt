@@ -136,7 +136,7 @@ class IntercomService : Service() {
                         val read = socket.getInputStream().read(hello)
                         if (read <= 0 || !String(hello, 0, read).startsWith("HELLO")) {
                             sendStatus("Handshake failed")
-                            continue
+                            return@use
                         }
                         val clientAddress = socket.inetAddress
                         sendStatus("Connected to ${clientAddress.hostAddress}")

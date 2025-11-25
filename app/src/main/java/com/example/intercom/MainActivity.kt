@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
@@ -30,8 +31,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (!granted) {
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            if (grants[Manifest.permission.RECORD_AUDIO] != true) {
                 Toast.makeText(this, "Microphone permission is required", Toast.LENGTH_LONG).show()
             }
         }
@@ -51,7 +52,7 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         registerReceiver(statusReceiver, IntentFilter(IntercomService.ACTION_STATUS))
-        ensureMicPermission()
+        ensurePermissions()
     }
 
     override fun onStop() {
@@ -59,15 +60,28 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(statusReceiver)
     }
 
-    private fun ensureMicPermission() {
-        val permission = Manifest.permission.RECORD_AUDIO
-        if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
-            permissionLauncher.launch(permission)
+    private fun ensurePermissions() {
+        val pending = requiredPermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (pending.isNotEmpty()) {
+            permissionLauncher.launch(pending.toTypedArray())
         }
     }
 
+    private fun requiredPermissions(): List<String> {
+        val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions += Manifest.permission.POST_NOTIFICATIONS
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions += Manifest.permission.BLUETOOTH_CONNECT
+        }
+        return permissions
+    }
+
     private fun startIntercom(mode: String) {
-        ensureMicPermission()
+        ensurePermissions()
         val intent = Intent(this, IntercomService::class.java).apply {
             action = IntercomService.ACTION_START
             putExtra(IntercomService.EXTRA_MODE, mode)
