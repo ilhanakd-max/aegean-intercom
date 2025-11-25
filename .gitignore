@@ -1,0 +1,10 @@
+/.idea/
+/.gradle/
+/local.properties
+/app/build/
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+*.iml
+gradle/wrapper/gradle-wrapper.jar
