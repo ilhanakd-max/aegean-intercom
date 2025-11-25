@@ -9,6 +9,7 @@ buildscript {
     }
 }
 
-tasks.register("clean", Delete::class) {
-    delete(rootProject.buildDir)
+// Use the legacy Groovy DSL clean task definition for broad Gradle compatibility
+task clean(type: org.gradle.api.tasks.Delete) {
+    delete rootProject.buildDir
 }
