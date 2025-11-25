@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Waiting"
+        android:textAppearance="@style/TextAppearance.AppCompat.Large"
+        android:paddingBottom="16dp" />
+
+    <Button
+        android:id="@+id/serverButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Start as Server" />
+
+    <Button
+        android:id="@+id/clientButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Start as Client"
+        android:layout_marginTop="12dp" />
+
+    <TextView
+        android:id="@+id/hintText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Ensure both phones are on the same hotspot."
+        android:layout_marginTop="24dp" />
+
+</LinearLayout>
