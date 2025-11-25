@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Intercom</string>
+    <string name="status_waiting">Waiting</string>
+    <string name="status_connecting">Connecting...</string>
+    <string name="status_connected">Connected</string>
+    <string name="status_reconnecting">Reconnecting...</string>
+</resources>
