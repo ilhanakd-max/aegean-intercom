@@ -174,7 +174,7 @@ class IntercomService : Service() {
                 val serverInfo = discoverServer() ?: run {
                     sendStatus("No server found. Retrying…")
                     sleepQuietly(1500)
-                    return@while
+                    continue
                 }
                 val serverAddress = serverInfo.first
                 val controlPort = serverInfo.second
@@ -196,7 +196,7 @@ class IntercomService : Service() {
                 if (!connected) {
                     sendStatus("Connection failed. Retrying…")
                     sleepQuietly(1500)
-                    return@while
+                    continue
                 }
                 sendStatus("Connected to ${serverAddress.hostAddress}")
                 startAudioSession(serverAddress)
