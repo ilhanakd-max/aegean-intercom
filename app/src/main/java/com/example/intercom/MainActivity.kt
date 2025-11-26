@@ -26,6 +26,11 @@ class MainActivity : AppCompatActivity() {
             if (intent?.action == IntercomService.ACTION_STATUS) {
                 val status = intent.getStringExtra(IntercomService.EXTRA_STATUS).orEmpty()
                 statusText.text = status
+                if (status.contains("failed", ignoreCase = true) ||
+                    status.contains("no server", ignoreCase = true)
+                ) {
+                    Toast.makeText(this@MainActivity, status, Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

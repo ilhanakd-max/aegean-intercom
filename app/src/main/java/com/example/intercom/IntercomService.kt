@@ -13,9 +13,11 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.example.intercom.audio.AudioEngine
+import com.example.intercom.network.NetworkUtils
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
@@ -100,6 +102,7 @@ class IntercomService : Service() {
     }
 
     private fun sendStatus(status: String) {
+        Log.d(TAG, status)
         val intent = Intent(ACTION_STATUS).apply { putExtra(EXTRA_STATUS, status) }
         sendBroadcast(intent)
     }
@@ -117,17 +120,26 @@ class IntercomService : Service() {
     }
 
     private fun runServer() {
-        sendStatus("Waiting for client")
         configureAudioRouting()
         while (!Thread.currentThread().isInterrupted) {
             var serverSocket: ServerSocket? = null
             var discoverySocket: DatagramSocket? = null
             try {
-                serverSocket = ServerSocket(CONTROL_PORT).apply { soTimeout = 1000 }
-                discoverySocket = DatagramSocket(DISCOVERY_PORT).apply {
+                val bindAddress = NetworkUtils.getLocalIpAddress(this)
+                    ?: InetAddress.getByName("0.0.0.0")
+                sendStatus("Server on ${bindAddress.hostAddress}:$CONTROL_PORT – waiting for client")
+                serverSocket = ServerSocket()
+                serverSocket.reuseAddress = true
+                serverSocket.bind(InetSocketAddress(bindAddress, CONTROL_PORT))
+                serverSocket.soTimeout = 1000
+
+                discoverySocket = DatagramSocket(null).apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(bindAddress, DISCOVERY_PORT))
                     broadcast = true
                     soTimeout = 1000
                 }
+
                 while (!Thread.currentThread().isInterrupted) {
                     respondToDiscovery(discoverySocket)
                     val clientSocket = tryAccept(serverSocket) ?: continue
@@ -141,12 +153,12 @@ class IntercomService : Service() {
                         val clientAddress = socket.inetAddress
                         sendStatus("Connected to ${clientAddress.hostAddress}")
                         startAudioSession(clientAddress)
-                        sendStatus("Reconnecting...")
+                        sendStatus("Connection ended. Waiting for client…")
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Server reconnect: ${e.message}")
-                sendStatus("Reconnecting...")
+                Log.w(TAG, "Server reconnect: ${e.message}", e)
+                sendStatus("Server reconnecting… ${e.message}")
                 sleepQuietly(1200)
             } finally {
                 discoverySocket?.close()
@@ -156,24 +168,43 @@ class IntercomService : Service() {
     }
 
     private fun runClient() {
-        sendStatus("Scanning for server")
         configureAudioRouting()
         while (!Thread.currentThread().isInterrupted) {
             try {
-                val serverInfo = discoverServer() ?: continue
+                val serverInfo = discoverServer() ?: run {
+                    sendStatus("No server found. Retrying…")
+                    sleepQuietly(1500)
+                    continue
+                }
                 val serverAddress = serverInfo.first
                 val controlPort = serverInfo.second
-                sendStatus("Connecting to ${serverAddress.hostAddress}")
-                Socket(serverAddress, controlPort).use { socket ->
-                    socket.getOutputStream().write("HELLO".toByteArray())
+                sendStatus("Connecting to ${serverAddress.hostAddress}:$controlPort")
+                var connected = false
+                repeat(3) { attempt ->
+                    try {
+                        Socket().use { socket ->
+                            socket.connect(InetSocketAddress(serverAddress, controlPort), 3000)
+                            socket.getOutputStream().write("HELLO".toByteArray())
+                        }
+                        connected = true
+                        return@repeat
+                    } catch (connectError: Exception) {
+                        Log.w(TAG, "Client connect attempt ${attempt + 1} failed", connectError)
+                        sleepQuietly(500)
+                    }
                 }
-                sendStatus("Connected")
+                if (!connected) {
+                    sendStatus("Connection failed. Retrying…")
+                    sleepQuietly(1500)
+                    continue
+                }
+                sendStatus("Connected to ${serverAddress.hostAddress}")
                 startAudioSession(serverAddress)
-                sendStatus("Reconnecting...")
+                sendStatus("Connection ended. Reconnecting…")
                 sleepQuietly(1200)
             } catch (e: Exception) {
-                Log.w(TAG, "Client reconnect due to ${e.message}")
-                sendStatus("Reconnecting...")
+                Log.w(TAG, "Client reconnect due to ${e.message}", e)
+                sendStatus("Client reconnecting… ${e.message}")
                 sleepQuietly(1500)
             }
         }
@@ -189,9 +220,12 @@ class IntercomService : Service() {
                 val reply = "${SERVER_RESPONSE}:$CONTROL_PORT".toByteArray()
                 val responsePacket = DatagramPacket(reply, reply.size, packet.address, packet.port)
                 discoverySocket.send(responsePacket)
+                Log.d(TAG, "Discovery request from ${packet.address.hostAddress}; replied")
             }
         } catch (e: SocketTimeoutException) {
             // expected
+        } catch (e: Exception) {
+            Log.w(TAG, "Discovery error: ${e.message}", e)
         }
     }
 
@@ -208,23 +242,43 @@ class IntercomService : Service() {
             socket.broadcast = true
             socket.soTimeout = 1500
             val payload = DISCOVERY_MESSAGE.toByteArray()
-            val packet = DatagramPacket(payload, payload.size, InetAddress.getByName("255.255.255.255"), DISCOVERY_PORT)
-            socket.send(packet)
+            val broadcastTargets = NetworkUtils.broadcastAddresses(this).ifEmpty {
+                listOf(InetAddress.getByName("255.255.255.255"))
+            }
+            broadcastTargets.forEach { target ->
+                try {
+                    val packet = DatagramPacket(payload, payload.size, target, DISCOVERY_PORT)
+                    socket.send(packet)
+                    Log.d(TAG, "Sent discovery to ${target.hostAddress}:$DISCOVERY_PORT")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Discovery send failed to ${target.hostAddress}", e)
+                }
+            }
+            val response = ByteArray(128)
             return try {
-                val buf = ByteArray(128)
-                val response = DatagramPacket(buf, buf.size)
-                socket.receive(response)
-                val text = String(response.data, 0, response.length)
+                val datagram = DatagramPacket(response, response.size)
+                socket.receive(datagram)
+                val text = String(datagram.data, 0, datagram.length)
                 if (text.startsWith(SERVER_RESPONSE)) {
                     val parts = text.split(":")
                     val port = parts.getOrNull(1)?.toIntOrNull() ?: CONTROL_PORT
-                    Pair(response.address, port)
+                    Pair(datagram.address, port)
                 } else {
-                    null
+                    fallbackGatewayTarget()
                 }
-            } catch (e: Exception) {
-                null
+            } catch (_: Exception) {
+                fallbackGatewayTarget()
             }
+        }
+    }
+
+    private fun fallbackGatewayTarget(): Pair<InetAddress, Int>? {
+        val gateway = NetworkUtils.gatewayAddress(this)
+        return if (gateway != null) {
+            Log.d(TAG, "Using gateway ${gateway.hostAddress} as server candidate")
+            Pair(gateway, CONTROL_PORT)
+        } else {
+            null
         }
     }
 
@@ -252,7 +306,11 @@ class IntercomService : Service() {
     private inner class AudioSession(private val peerAddress: InetAddress) {
         private val running = AtomicBoolean(true)
         private val sendSocket = DatagramSocket()
-        private val receiveSocket = DatagramSocket(AUDIO_PORT).apply { soTimeout = 2000 }
+        private val receiveSocket = DatagramSocket(null).apply {
+            reuseAddress = true
+            bind(InetSocketAddress(AUDIO_PORT))
+            soTimeout = 2000
+        }
         private val receiveTask = executor.submit {
             val buffer = ByteArray(AUDIO_BUFFER_SIZE)
             try {
@@ -264,12 +322,21 @@ class IntercomService : Service() {
                     }
                 }
             } catch (e: Exception) {
-                if (running.get()) Log.w(TAG, "Receive error: ${e.message}")
+                if (running.get()) Log.w(TAG, "Receive error: ${e.message}", e)
             } finally {
                 running.set(false)
                 receiveSocket.close()
                 sendSocket.close()
             }
+        }
+
+        init {
+            try {
+                sendSocket.connect(peerAddress, AUDIO_PORT)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to connect UDP socket: ${e.message}", e)
+            }
+            Log.d(TAG, "Audio session started with ${peerAddress.hostAddress}:$AUDIO_PORT")
         }
 
         fun send(data: ByteArray, length: Int) {
@@ -278,7 +345,8 @@ class IntercomService : Service() {
                 val packet = DatagramPacket(data.copyOf(length), length, peerAddress, AUDIO_PORT)
                 sendSocket.send(packet)
             } catch (e: Exception) {
-                Log.w(TAG, "Send failed: ${e.message}")
+                Log.w(TAG, "Send failed: ${e.message}", e)
+                running.set(false)
             }
         }
 
@@ -294,8 +362,14 @@ class IntercomService : Service() {
 
         fun close() {
             running.set(false)
-            receiveSocket.close()
-            sendSocket.close()
+            try {
+                receiveSocket.close()
+            } catch (_: Exception) {
+            }
+            try {
+                sendSocket.close()
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -315,7 +389,7 @@ class IntercomService : Service() {
         private const val DISCOVERY_PORT = 50001
         private const val CONTROL_PORT = 50002
         private const val AUDIO_PORT = 50004
-        private const val AUDIO_BUFFER_SIZE = 2048
+        private const val AUDIO_BUFFER_SIZE = 4096
 
         private const val DISCOVERY_MESSAGE = "DISCOVER_INTERCOM"
         private const val SERVER_RESPONSE = "INTERCOM_SERVER"
