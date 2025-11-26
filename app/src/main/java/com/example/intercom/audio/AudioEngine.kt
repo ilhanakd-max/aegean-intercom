@@ -5,7 +5,9 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.util.Log
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicBoolean
 
 class AudioEngine(private val sampleRate: Int = 16000) {
@@ -13,12 +15,13 @@ class AudioEngine(private val sampleRate: Int = 16000) {
         sampleRate,
         AudioFormat.CHANNEL_IN_MONO,
         AudioFormat.ENCODING_PCM_16BIT
-    ).coerceAtLeast(sampleRate / 5)
+    ).coerceAtLeast(sampleRate / 5) * 2
 
     private var audioRecord: AudioRecord? = null
     private var audioTrack: AudioTrack? = null
     private val running = AtomicBoolean(false)
     private val recordExecutor = Executors.newSingleThreadExecutor()
+    private var recordingTask: Future<*>? = null
 
     fun start(onAudioFrame: (ByteArray, Int) -> Unit) {
         if (running.get()) return
@@ -51,24 +54,36 @@ class AudioEngine(private val sampleRate: Int = 16000) {
         audioTrack = track
         track.play()
         record.startRecording()
-        recordExecutor.execute {
+        recordingTask = recordExecutor.submit {
             val buffer = ByteArray(frameSize)
-            while (running.get()) {
-                val read = record.read(buffer, 0, buffer.size)
-                if (read > 0) {
-                    onAudioFrame(buffer.copyOf(read), read)
+            try {
+                while (running.get()) {
+                    val read = record.read(buffer, 0, buffer.size)
+                    if (read > 0) {
+                        onAudioFrame(buffer.copyOf(read), read)
+                    }
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Audio capture error: ${e.message}", e)
             }
         }
     }
 
     fun play(data: ByteArray, length: Int) {
         if (!running.get()) return
-        audioTrack?.write(data, 0, length)
+        try {
+            audioTrack?.write(data, 0, length)
+        } catch (e: Exception) {
+            Log.w(TAG, "Audio playback error: ${e.message}", e)
+        }
     }
 
     fun stop() {
         running.set(false)
+        try {
+            recordingTask?.cancel(true)
+        } catch (_: Exception) {
+        }
         audioRecord?.apply {
             try {
                 stop()
@@ -78,6 +93,7 @@ class AudioEngine(private val sampleRate: Int = 16000) {
         }
         audioTrack?.apply {
             try {
+                flush()
                 stop()
                 release()
             } catch (_: Exception) {
@@ -85,5 +101,10 @@ class AudioEngine(private val sampleRate: Int = 16000) {
         }
         audioRecord = null
         audioTrack = null
+        recordingTask = null
+    }
+
+    companion object {
+        private const val TAG = "AudioEngine"
     }
 }
