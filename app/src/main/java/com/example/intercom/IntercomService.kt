@@ -126,16 +126,17 @@ class IntercomService : Service() {
             var discoverySocket: DatagramSocket? = null
             try {
                 val bindAddress = NetworkUtils.getLocalIpAddress(this)
-                    ?: InetAddress.getByName("0.0.0.0")
-                sendStatus("Server on ${bindAddress.hostAddress}:$CONTROL_PORT – waiting for client")
+                val listenAddress = InetAddress.getByName("0.0.0.0")
+                val statusAddress = bindAddress ?: listenAddress
+                sendStatus("Server on ${statusAddress.hostAddress}:$CONTROL_PORT – waiting for client")
                 serverSocket = ServerSocket()
                 serverSocket.reuseAddress = true
-                serverSocket.bind(InetSocketAddress(bindAddress, CONTROL_PORT))
+                serverSocket.bind(InetSocketAddress(listenAddress, CONTROL_PORT))
                 serverSocket.soTimeout = 1000
 
                 discoverySocket = DatagramSocket(null).apply {
                     reuseAddress = true
-                    bind(InetSocketAddress(bindAddress, DISCOVERY_PORT))
+                    bind(InetSocketAddress(listenAddress, DISCOVERY_PORT))
                     broadcast = true
                     soTimeout = 1000
                 }
@@ -263,6 +264,7 @@ class IntercomService : Service() {
                 if (text.startsWith(SERVER_RESPONSE)) {
                     val parts = text.split(":")
                     val port = parts.getOrNull(1)?.toIntOrNull() ?: CONTROL_PORT
+                    sendStatus("Discovered server at ${datagram.address.hostAddress}:$port")
                     Pair(datagram.address, port)
                 } else {
                     fallbackGatewayTarget()
@@ -277,8 +279,10 @@ class IntercomService : Service() {
         val gateway = NetworkUtils.gatewayAddress(this)
         return if (gateway != null) {
             Log.d(TAG, "Using gateway ${gateway.hostAddress} as server candidate")
+            sendStatus("Trying gateway ${gateway.hostAddress} as server")
             Pair(gateway, CONTROL_PORT)
         } else {
+            sendStatus("No discovery response received")
             null
         }
     }
