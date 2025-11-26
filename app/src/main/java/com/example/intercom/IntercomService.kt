@@ -171,7 +171,8 @@ class IntercomService : Service() {
         configureAudioRouting()
         while (!Thread.currentThread().isInterrupted) {
             try {
-                val serverInfo = discoverServer() ?: run {
+                val serverInfo = discoverServer()
+                if (serverInfo == null) {
                     sendStatus("No server found. Retrying…")
                     sleepQuietly(1500)
                     continue
