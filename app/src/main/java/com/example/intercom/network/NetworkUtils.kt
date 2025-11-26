@@ -62,7 +62,9 @@ object NetworkUtils {
     fun gatewayAddress(context: Context): InetAddress? {
         try {
             val lp = linkProperties(context)
-            val gateway = lp?.gateways?.firstOrNull { it is Inet4Address } as? Inet4Address
+            val gateway = lp?.routes
+                ?.mapNotNull { it.gateway }
+                ?.firstOrNull { it is Inet4Address } as? Inet4Address
             if (gateway != null) return gateway
         } catch (t: Throwable) {
             Log.w(TAG, "Unable to read LinkProperties gateway: ${t.message}")
